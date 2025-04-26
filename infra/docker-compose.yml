@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13
+    container_name: gaming_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-gaming_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-gaming_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gaming_network
+
+  redis:
+    image: redis:6
+    container_name: gaming_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gaming_network
+
+  backend:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: gaming_backend
+    command: uvicorn backend.core.app:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ../backend:/app/backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-gaming_db}
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - gaming_network
+
+  nginx:
+    image: nginx:1.21
+    container_name: gaming_nginx
+    volumes:
+      - ../infra/nginx.conf:/etc/nginx/nginx.conf
+      - ../frontend/dist:/usr/share/nginx/html
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - gaming_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  gaming_network:
+    driver: bridge
